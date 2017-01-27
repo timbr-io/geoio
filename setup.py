@@ -11,7 +11,8 @@ install_requires = [
     'tzwhere',
     'ephem',
     'numpy',
-    'tinytools'
+    'tinytools',
+    'timbr-machine'
     ]
     # optional libraries for additional capabilities:
     # 'matplotlib'
