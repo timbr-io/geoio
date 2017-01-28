@@ -140,7 +140,7 @@ class Image(object):
         self.node = node
         self.level = level
         self._bounds = parse_bounds(bounds)
-        self._dir = os.path.dirname(os.path.abspath(__file__))
+        self._dir = os.getcwd()#os.path.dirname(os.path.abspath(__file__))
         self._filename = os.path.join(self._dir, self._gid + ".h5")
         self.vrt = self._vrt()
         if not os.path.exists(self.vrt):
