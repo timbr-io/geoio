@@ -4,6 +4,7 @@ import logging as _logging
 # Pull in main modules/classes
 from base import GeoImage
 from dg import DGImage
+from ipe.image import Image
 import constants
 import utils
 #import downsample  # numba compile is trigger at import and it necessarily slow
