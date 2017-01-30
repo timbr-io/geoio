@@ -37,12 +37,6 @@ gdal.UseExceptions()
 
 from matplotlib import pyplot as plt
 
-def plot(img, cmap=None, w=5, h=5):
-    #plt.figure(figsize=(w,h)
-    plt.axis('off')
-    plt.imshow(img, cmap=cmap)
-    plt.show()
-
 NTHREAD_DEFAULT = 4
 _num_workers = NTHREAD_DEFAULT
 
@@ -170,7 +164,7 @@ class Image(object):
         urls = collect_urls(tmp_vrt)
         darr = build_array(urls, bands=self._src.meta['count'])
         self._src.close()
-
+        
         print("Starting parallel fetching... {} chips".format(sum([len(x) for x in urls])))
         with dask.set_options(get=threaded_get):
             darr.to_hdf5(self._filename, dpath)
@@ -184,10 +178,13 @@ class Image(object):
         return self.vrt
 
     def _generate_vrt(self):
+        transform = [str(c) for c in self._src.get_transform()]
+        transform[0] = str(self._bounds[0])
+        transform[3] = str(self._bounds[-1])
         vrt = ET.Element("VRTDataset", {"rasterXSize": str(self._roi.num_cols),
                         "rasterYSize": str(self._roi.num_rows)})
         ET.SubElement(vrt, "SRS").text = str(self._src.crs['init']).upper()
-        ET.SubElement(vrt, "GeoTransform").text = ", ".join([str(c) for c in self._src.get_transform()])
+        ET.SubElement(vrt, "GeoTransform").text = ", ".join(transform)
         for i in self._src.indexes:
             band = ET.SubElement(vrt, "VRTRasterBand", {"dataType": self._src.dtypes[i-1].title(), "band": str(i)})
             src = ET.SubElement(band, "SimpleSource")
@@ -228,9 +225,9 @@ class Image(object):
             img[img < 0.0] = 0.0
             img[img > 1.0] = 1.0
             img = (255.0*np.power(img, 0.5)).astype('uint8')
-            return plot(img)
+            return self.plot(img)
         else:
-            return plot(data, cmap='Greys')
+            return self.plot(data[0,:,:], cmap='Greys_r')
 
 
     def read(self, bands=[], **kwargs):
@@ -249,15 +246,23 @@ class Image(object):
         nbands, height, width = im.shape
         if path is None:
             path = os.path.join(self._dir, ".".join([self._gid, self.node, self.level]) + ".tif")
-        with rasterio.open(path, "w",
-                           driver="GTiff",
-                           width=width,
-                           height=height,
-                           dtype=im.dtype,
-                           count=nbands) as dst:
-            dst.write(im)
+
+        with rasterio.open(self.vrt) as src:
+            im = src.read()
+            if dtype is not None:
+                im = im.astype(dtype)
+            if path is None:
+                path = os.path.join(self._dir, self._name + ".tif")
+            meta = src.meta.copy()
+            meta.update({'driver': 'GTiff'})
+            with rasterio.open(path, "w", **meta) as dst:
+                dst.write(im)
         return path
 
+    def plot(self, img, cmap=None, w=7, h=7):
+        plt.axis('off')
+        plt.imshow(img, cmap=cmap)
+        return plt.show()
 
 if __name__ == '__main__':
     img = Image('cea67467-f90f-4eb8-85f0-62b875f51dea', bounds='-105.0121307373047,39.7481943650473,-104.99500823974611,39.75656032588025')
