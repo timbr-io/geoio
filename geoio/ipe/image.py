@@ -9,11 +9,17 @@ try:
 except ImportError:
     pass
 
+try:
+    from IPython.core.display import clear_output
+    have_ipython = True
+except ImportError:
+    have_ipython = False
+
 
 import tables
 import h5py
 
-import os
+import os, sys
 import json
 import inspect
 from functools import partial
@@ -107,9 +113,9 @@ def collect_urls(vrt):
             for key, it in groupby(sorted(chunks, key=lambda x: x[0]), lambda x: x[0])]
     return grid
 
+
 @delayed
-def load_url(url, bands=8):
-    #print('fetching', url)
+def load_url(url, progressFn, bands=8):
     thread_id = threading.current_thread().ident
     _curl = _curl_pool[thread_id]
     buf = BytesIO()
@@ -127,12 +133,14 @@ def load_url(url, bands=8):
           arr = np.zeros([bands,256,256], dtype=np.float32)
           _curl.close()
           del _curl_pool[thread_id]
+    progressFn()
     return arr
 
-def build_array(urls, bands=8):
+def build_array(urls, progressFn, bands=8):
+    total = sum([len(x) for x in urls])
     buf = da.concatenate(
-        [da.concatenate([da.from_delayed(load_url(url, bands=bands), (bands,256,256), np.float32) for url in row],
-                        axis=1) for row in urls], axis=2)
+        [da.concatenate([da.from_delayed(load_url(url, progressFn, bands=bands), (bands,256,256), np.float32) for u, url in enumerate(row)],
+                        axis=1) for r, row in enumerate(urls)], axis=2)
     return buf
 
 
@@ -155,7 +163,7 @@ class Image(object):
         except:
             pass
 
-        print("Fetching image %s" % self._gid)
+        #print("Fetching image")
 
         url = build_url(self._gid, node=self.node, level=self.level)
         self._src = rasterio.open(url)
@@ -170,20 +178,39 @@ class Image(object):
 
         dpath = "/{}_{}_{}".format(self._gid, self.node, self.level)
         urls = collect_urls(tmp_vrt)
-        darr = build_array(urls, bands=self._src.meta['count'])
+        self._total = sum([len(x) for x in urls])
+        self._current = 0
+        darr = build_array(urls, self._reportProgress(), bands=self._src.meta['count'])
         self._src.close()
         
-        print("Starting parallel fetching... {} chips".format(sum([len(x) for x in urls])))
+        #print("Starting parallel fetching... {} chips".format(self._total))
         with dask.set_options(get=threaded_get):
             darr.to_hdf5(self._filename, dpath)
         for key in _curl_pool.keys():
             _curl_pool[key].close()
             del _curl_pool[key]
-        print("Fetch complete")
+
+        if have_ipython:
+          try:
+              clear_output()
+          except Exception:
+              pass
 
         self._generate_vrt()
         os.remove(tmp_vrt)
         return self.vrt
+
+    def _reportProgress(self):
+        def fn():
+            self._current = self._current + 1
+            if have_ipython:
+                try:
+                    clear_output()
+                    print '%d%s' % (int((float(self._current) / float(self._total)) * 100.0), '%')
+                    sys.stdout.flush()
+                except Exception:
+                    pass
+        return fn
 
     def _generate_vrt(self):
         transform = [str(c) for c in self._src.get_transform()]
