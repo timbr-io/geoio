@@ -228,7 +228,7 @@ class Image(object):
     def preview(self, stretch=[0.02, 0.98]):
         plt.axis('off') 
         data = self.read()
-        if data.shape[-1] == 8:
+        if data.shape[0] == 8:
             img = np.stack((data[4,:,:], data[2,:,:], data[1,:,:]))
             return imshow(img)
         else:
