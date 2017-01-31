@@ -133,7 +133,6 @@ def load_url(url, progressFn, bands=8):
           arr = np.zeros([bands,256,256], dtype=np.float32)
           _curl.close()
           del _curl_pool[thread_id]
-    progressFn()
     return arr
 
 def build_array(urls, progressFn, bands=8):
@@ -183,18 +182,14 @@ class Image(object):
         darr = build_array(urls, self._reportProgress(), bands=self._src.meta['count'])
         self._src.close()
         
-        #print("Starting parallel fetching... {} chips".format(self._total))
+        print("Starting parallel fetching... {} chips".format(self._total))
         with dask.set_options(get=threaded_get):
             darr.to_hdf5(self._filename, dpath)
         for key in _curl_pool.keys():
             _curl_pool[key].close()
             del _curl_pool[key]
+        print("Fetch Complete")
 
-        if have_ipython:
-          try:
-              clear_output()
-          except Exception:
-              pass
 
         self._generate_vrt()
         os.remove(tmp_vrt)
