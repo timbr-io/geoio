@@ -3,6 +3,13 @@ try:
 except ImportError:
     from StringIO import cStringIO as BytesIO
 
+try:
+    import signal
+    signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+except ImportError:
+    pass
+
+
 import tables
 import h5py
 
@@ -18,6 +25,8 @@ import contextlib
 import warnings
 warnings.filterwarnings('ignore')
 
+from geoio.plotting import imshow
+
 import requests
 from requests.compat import urljoin
 import xml.etree.cElementTree as ET
@@ -30,14 +39,10 @@ from dask.delayed import delayed
 import dask.array as da
 import numpy as np
 
-from gbdxtools import Interface
-
 from osgeo import gdal
 gdal.UseExceptions()
 
 from matplotlib import pyplot as plt
-
-import tinytools as tt
 
 NTHREAD_DEFAULT = 4
 _num_workers = NTHREAD_DEFAULT
@@ -110,6 +115,7 @@ def load_url(url, bands=8):
     buf = BytesIO()
     _curl.setopt(_curl.URL, url)
     _curl.setopt(_curl.WRITEDATA, buf)
+    _curl.setopt(pycurl.NOSIGNAL, 1)
     _curl.perform()
 
     with MemoryFile(buf.getvalue()) as memfile:
@@ -219,68 +225,14 @@ class Image(object):
             with rasterio.open(self.fetch()) as src:
                 yield src
 
-    def preview(self):
+    def preview(self, stretch=[0.02, 0.98]):
+        plt.axis('off') 
         data = self.read()
-        nbands, x, y = data.shape
-        if nbands == 8:
-            img = np.dstack((data[4,:,:], data[2,:,:], data[1,:,:])) #.clip(min=0) * 255.0).astype(np.uint8)
-            img[img < 0.0] = 0.0
-            img[img > 1.0] = 1.0
-            img = (255.0*np.power(img, 0.5)).astype('uint8')
-            return self.plot(img)
+        if data.shape[-1] == 8:
+            img = np.stack((data[4,:,:], data[2,:,:], data[1,:,:]))
+            return imshow(img)
         else:
-            return self.plot(data[0,:,:], cmap='Greys_r')
-
-    def imshow(self, stretch=[0.02, 0.98], stretch_type='linear'):
-        """Convenience method to do all the plotting gymnastics to get a resonable
-        looking image plot.
-        Input:
-        data            numpy array in gdal band order - 3 dimensions (bands, x, y)
-        stretch         stretch values on a scale of [0,1]
-        stretch_type    type of stretch scale (only linear is curretly supported)
-        """
-
-        data = self.read()
-
-        if len(data.shape) == 2:
-            data = np.repeat(data[np.newaxis,:,:], 3, axis=0)
-
-        if data.shape[0] == 1:
-            data = np.repeat(data, 3, axis=0)
-
-        if len(data.shape) != 3:
-            raise ValueError
-
-        # define stretch
-        # Possibly useful code for additional stretches at:
-        # http://scikit-image.org/docs/dev/api/skimage.exposure.html
-        # also
-        # http://scikit-image.org/docs/dev/auto_examples/plot_equalize.html
-        if stretch_type == "linear":
-            pass
-        else:
-            raise ValueError('The passed value of stretch is not implemented.')
-
-        # Get the per-band scaled data
-        data = tt.np_img.conv_to_bandslast(data)
-        data = data.astype('float32')
-        lims = np.percentile(data, stretch ,axis=(0, 1))
-        for x in xrange(len(data[0, 0, :])):
-            top = lims[:, x][1]
-            bottom = lims[:, x][0]
-            data[:, :, x] = (data[:, :, x] - bottom) / float(top - bottom)
-        data = np.clip(data, 0, 1)
-
-        # Definetly not the most memory efficent for a single band image.
-        if data.shape[2] == 3:
-            plt.imshow(data, interpolation = 'nearest');
-        elif data.shape[2] == 1:
-            plt.imshow(data[:, :, 0], interpolation = 'nearest')
-        else:
-            raise ValueError("No plotting done, bad dimensions")
-        
-        plt.grid(False)
-        plt.show(block=False)
+            return imshow(data[0,:,:])
 
     def read(self, bands=[], **kwargs):
         for band in bands:
@@ -310,11 +262,6 @@ class Image(object):
             with rasterio.open(path, "w", **meta) as dst:
                 dst.write(im)
         return path
-
-    def plot(self, img, cmap=None, w=7, h=7):
-        plt.axis('off')
-        plt.imshow(img, cmap=cmap)
-        return plt.show()
 
 if __name__ == '__main__':
     img = Image('cea67467-f90f-4eb8-85f0-62b875f51dea', bounds='-105.0121307373047,39.7481943650473,-104.99500823974611,39.75656032588025')
