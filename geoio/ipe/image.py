@@ -77,11 +77,14 @@ def index_to_slice(ind, rowstep, colstep):
     window = ((i * rowstep, (i + 1) * rowstep), (j * colstep, (j + 1) * colstep))
     return window
 
-def roi_from_bbox_projection(src, user_bounds, preserve_blocksize=True):
-    roi = src.window(*user_bounds)
+def roi_from_bbox_projection(src, user_bounds, block_shapes=None, preserve_blocksize=True):
+    roi = src.window(*user_bounds[0])
     if not preserve_blocksize:
         return roi
-    blocksafe_roi = rasterio.windows.round_window_to_full_blocks(roi, src.block_shapes)
+    if block_shapes is None:
+        blocksafe_roi = rasterio.windows.round_window_to_full_blocks(roi, src.block_shapes)
+    else:
+        blocksafe_roi = rasterio.windows.round_window_to_full_blocks(roi, block_shapes)
     return blocksafe_roi
 
 def generate_blocks(window, blocksize):
@@ -162,15 +165,16 @@ class Image(object):
         except:
             pass
 
-        #print("Fetching image")
+        print("Fetching image")
 
         url = build_url(self._gid, node=self.node, level=self.level)
         self._src = rasterio.open(url)
-        self._roi = roi_from_bbox_projection(self._src, self._bounds)
-
+        block_shapes = [(256, 256) for bs in self._src.block_shapes]
+        self._roi = roi_from_bbox_projection(self._src, self._bounds, block_shapes=block_shapes)
         window = self._roi.flatten()
         px_bounds = [window[0], window[1], window[0] + window[2], window[1] + window[3] ]
         res = requests.get(url, params={"window": ",".join([str(c) for c in px_bounds])})
+        #print url + "?window=" + ",".join([str(c) for c in px_bounds])
         tmp_vrt = os.path.join(self._dir, ".".join([".tmp", self.node, self.level, self._gid + ".vrt"]))
         with open(tmp_vrt, "w") as f:
             f.write(res.content)
@@ -179,21 +183,22 @@ class Image(object):
         urls = collect_urls(tmp_vrt)
         self._total = sum([len(x) for x in urls])
         self._current = 0
-        darr = build_array(urls, self._reportProgress(), bands=self._src.meta['count'])
+        self.darr = build_array(urls, self._reportProgress(), bands=self._src.meta['count'])
         self._src.close()
         
         print("Starting parallel fetching... {} chips".format(self._total))
         with dask.set_options(get=threaded_get):
-            darr.to_hdf5(self._filename, dpath)
+            self.darr.to_hdf5(self._filename, dpath)
         for key in _curl_pool.keys():
             _curl_pool[key].close()
             del _curl_pool[key]
-        print("Fetch Complete")
+        print("Fetch Complete", self.darr.shape)
 
 
         self._generate_vrt()
-        os.remove(tmp_vrt)
+        #os.remove(tmp_vrt)
         return self.vrt
+
 
     def _reportProgress(self):
         def fn():
@@ -208,24 +213,27 @@ class Image(object):
         return fn
 
     def _generate_vrt(self):
-        transform = [str(c) for c in self._src.get_transform()]
-        transform[0] = str(self._bounds[0])
-        transform[3] = str(self._bounds[-1])
-        vrt = ET.Element("VRTDataset", {"rasterXSize": str(self._roi.num_cols),
-                        "rasterYSize": str(self._roi.num_rows)})
+        cols = str(self.darr.shape[-1])
+        rows = str(self.darr.shape[1])
+        (minx, miny, maxx, maxy) = rasterio.windows.bounds(self._roi, self._src.transform)
+        affine = [c for c in rasterio.transform.from_bounds(minx, miny, maxx, maxy, int(cols), int(rows))]
+        transform = [affine[2], affine[4], 0.0, affine[5], 0.0, affine[4]]
+        
+        vrt = ET.Element("VRTDataset", {"rasterXSize": cols,
+                        "rasterYSize": rows})
         ET.SubElement(vrt, "SRS").text = str(self._src.crs['init']).upper()
-        ET.SubElement(vrt, "GeoTransform").text = ", ".join(transform)
+        ET.SubElement(vrt, "GeoTransform").text = ", ".join(map(str, transform))
         for i in self._src.indexes:
             band = ET.SubElement(vrt, "VRTRasterBand", {"dataType": self._src.dtypes[i-1].title(), "band": str(i)})
             src = ET.SubElement(band, "SimpleSource")
             ET.SubElement(src, "SourceFilename").text = "HDF5:{}://{}_{}_{}".format(self._filename, self._gid, self.node, self.level)
             ET.SubElement(src, "SourceBand").text =str(i)
             ET.SubElement(src, "SrcRect", {"xOff": "0", "yOff": "0",
-                                           "xSize": str(self._roi.num_cols), "ySize": str(self._roi.num_rows)})
+                                           "xSize": cols, "ySize": rows})
             ET.SubElement(src, "DstRect", {"xOff": "0", "yOff": "0",
-                                           "xSize": str(self._roi.num_cols), "ySize": str(self._roi.num_rows)})
+                                           "xSize": cols, "ySize": rows})
 
-            ET.SubElement(src, "SourceProperties", {"RasterXSize": str(self._roi.num_cols), "RasterYSize": str(self._roi.num_rows),
+            ET.SubElement(src, "SourceProperties", {"RasterXSize": cols, "RasterYSize": rows,
                                                     "BlockXSize": "128", "BlockYSize": "128", "DataType": self._src.dtypes[i-1].title()})
         vrt_str = ET.tostring(vrt)
 
@@ -286,6 +294,9 @@ class Image(object):
         return path
 
 if __name__ == '__main__':
-    img = Image('cea67467-f90f-4eb8-85f0-62b875f51dea', bounds='-105.0121307373047,39.7481943650473,-104.99500823974611,39.75656032588025')
+    #img = Image('cea67467-f90f-4eb8-85f0-62b875f51dea', bounds='-105.0121307373047,39.7481943650473,-104.99500823974611,39.75656032588025')
+    #img = image = Image('94427d3e-8e7b-4452-a152-fc533e3c16b7', bounds='-0.08574485778808595,51.50158353472559,-0.06737709045410158,51.512909075833434')
+    img = Image('59f87923-7afa-4588-9f59-dc5ad8b821b0', bounds='-0.07840633392333984,51.506739141893,-0.07396459579467775,51.50955711581998')
+    #img = Image('dc11bd43-401a-40c5-b937-a96cb44fe26c', bounds='-0.07840633392333984,51.506739141893,-0.07396459579467775,51.50955711581998')
     data = img.read()
     print data.shape
