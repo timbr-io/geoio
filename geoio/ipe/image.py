@@ -78,7 +78,7 @@ def index_to_slice(ind, rowstep, colstep):
     return window
 
 def roi_from_bbox_projection(src, user_bounds, block_shapes=None, preserve_blocksize=True):
-    roi = src.window(*user_bounds[0])
+    roi = src.window(*user_bounds)
     if not preserve_blocksize:
         return roi
     if block_shapes is None:
@@ -152,7 +152,7 @@ class Image(object):
         self.node = node
         self.level = level
         self._bounds = parse_bounds(bounds)
-        self._dir = os.getcwd()#os.path.dirname(os.path.abspath(__file__))
+        self._dir = os.getcwd()
         self._filename = os.path.join(self._dir, self._gid + ".h5")
         self.vrt = self._vrt()
         if not os.path.exists(self.vrt):
@@ -174,30 +174,40 @@ class Image(object):
         window = self._roi.flatten()
         px_bounds = [window[0], window[1], window[0] + window[2], window[1] + window[3] ]
         res = requests.get(url, params={"window": ",".join([str(c) for c in px_bounds])})
-        #print url + "?window=" + ",".join([str(c) for c in px_bounds])
         tmp_vrt = os.path.join(self._dir, ".".join([".tmp", self.node, self.level, self._gid + ".vrt"]))
         with open(tmp_vrt, "w") as f:
             f.write(res.content)
 
         dpath = "/{}_{}_{}".format(self._gid, self.node, self.level)
         urls = collect_urls(tmp_vrt)
-        self._total = sum([len(x) for x in urls])
-        self._current = 0
-        self.darr = build_array(urls, self._reportProgress(), bands=self._src.meta['count'])
-        self._src.close()
+        if len(urls):
+            self._total = sum([len(x) for x in urls])
+            self._current = 0
+            self.darr = build_array(urls, self._reportProgress(), bands=self._src.meta['count'])
+            self._src.close()
         
-        print("Starting parallel fetching... {} chips".format(self._total))
-        with dask.set_options(get=threaded_get):
-            self.darr.to_hdf5(self._filename, dpath)
-        for key in _curl_pool.keys():
-            _curl_pool[key].close()
-            del _curl_pool[key]
-        print("Fetch Complete", self.darr.shape)
+            print("Starting parallel fetching... {} chips".format(self._total))
+            with dask.set_options(get=threaded_get):
+                self.darr.to_hdf5(self._filename, dpath)
+            for key in _curl_pool.keys():
+                _curl_pool[key].close()
+                del _curl_pool[key]
+            print("Fetch Complete")
 
-
-        self._generate_vrt()
-        #os.remove(tmp_vrt)
-        return self.vrt
+            self._generate_vrt()
+            os.remove(tmp_vrt)
+            return self.vrt
+        else:
+            try:
+                os.remove(tmp_vrt)
+                os.remove(self.vrt)
+                os.remove(self._filename)
+            except:
+                pass
+            print("No data intersection within given bounds")
+            return None
+            
+      
 
 
     def _reportProgress(self):
@@ -294,9 +304,13 @@ class Image(object):
         return path
 
 if __name__ == '__main__':
+    # MULTI
     #img = Image('cea67467-f90f-4eb8-85f0-62b875f51dea', bounds='-105.0121307373047,39.7481943650473,-104.99500823974611,39.75656032588025')
     #img = image = Image('94427d3e-8e7b-4452-a152-fc533e3c16b7', bounds='-0.08574485778808595,51.50158353472559,-0.06737709045410158,51.512909075833434')
-    img = Image('59f87923-7afa-4588-9f59-dc5ad8b821b0', bounds='-0.07840633392333984,51.506739141893,-0.07396459579467775,51.50955711581998')
+    #img = Image('59f87923-7afa-4588-9f59-dc5ad8b821b0', bounds='-0.07840633392333984,51.506739141893,-0.07396459579467775,51.50955711581998')
     #img = Image('dc11bd43-401a-40c5-b937-a96cb44fe26c', bounds='-0.07840633392333984,51.506739141893,-0.07396459579467775,51.50955711581998')
+
+    # PAN
+    img = Image('c9e5a557-911c-4078-97af-3724cbf76a65', bounds='-105.26801347732545,40.00817393602954,-105.26406526565553,40.01108296862613')
     data = img.read()
     print data.shape
