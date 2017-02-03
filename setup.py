@@ -12,6 +12,12 @@ install_requires = [
     'ephem',
     'numpy',
     'tinytools',
+    'dask',
+    'h5py',
+    'requests',
+    'matplotlib',
+    'pycurl',
+    'rasterio'
     ]
     # optional libraries for additional capabilities:
     # 'matplotlib'
