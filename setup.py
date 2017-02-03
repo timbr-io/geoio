@@ -12,7 +12,6 @@ install_requires = [
     'ephem',
     'numpy',
     'tinytools',
-    'timbr-machine'
     ]
     # optional libraries for additional capabilities:
     # 'matplotlib'

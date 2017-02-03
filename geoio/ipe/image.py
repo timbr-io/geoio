@@ -15,9 +15,8 @@ try:
 except ImportError:
     have_ipython = False
 
-
-import tables
-import h5py
+import base64
+import hashlib
 
 import os, sys
 import json
@@ -152,8 +151,9 @@ class Image(object):
         self.node = node
         self.level = level
         self._bounds = parse_bounds(bounds)
+        self._bounds_hash = base64.urlsafe_b64encode(hashlib.sha1(bounds).digest())
         self._dir = os.getcwd()
-        self._filename = os.path.join(self._dir, self._gid + ".h5")
+        self._filename = os.path.join(self._dir, "{}_{}.h5".format(self._gid, self._bounds_hash))
         self.vrt = self._vrt()
         if not os.path.exists(self.vrt):
             self.fetch()
@@ -253,7 +253,7 @@ class Image(object):
         return self.vrt
 
     def _vrt(self):
-        return os.path.join(self._dir, ".".join([self._gid, self.node, str(self.level) + ".vrt"]))
+        return os.path.join(self._dir, ".".join([self._gid, self.node, str(self.level), self._bounds_hash + ".vrt"]))
 
     @contextlib.contextmanager
     def open(self):
@@ -286,19 +286,20 @@ class Image(object):
     def geotiff(self, path=None, dtype=None):
         im = self.read()
         if dtype is not None:
-          im = im.astype(dtype)
+            im = im.astype(dtype)
         nbands, height, width = im.shape
         if path is None:
             path = os.path.join(self._dir, ".".join([self._gid, self.node, self.level]) + ".tif")
 
         with rasterio.open(self.vrt) as src:
             im = src.read()
-            if dtype is not None:
-                im = im.astype(dtype)
-            if path is None:
-                path = os.path.join(self._dir, self._name + ".tif")
             meta = src.meta.copy()
             meta.update({'driver': 'GTiff'})
+            if dtype is not None:
+                im = im.astype(dtype)
+                meta.update({'dtype': dtype})
+            if path is None:
+                path = os.path.join(self._dir, self._name + ".tif")
             with rasterio.open(path, "w", **meta) as dst:
                 dst.write(im)
         return path
@@ -311,6 +312,6 @@ if __name__ == '__main__':
     #img = Image('dc11bd43-401a-40c5-b937-a96cb44fe26c', bounds='-0.07840633392333984,51.506739141893,-0.07396459579467775,51.50955711581998')
 
     # PAN
-    img = Image('c9e5a557-911c-4078-97af-3724cbf76a65', bounds='-105.26801347732545,40.00817393602954,-105.26406526565553,40.01108296862613')
+    img = Image('c9e5a557-911c-4078-97af-3724cbf76a65', bounds='-105.268013477325455,40.008173936029545,-105.264065265655535,40.011082968626135')
     data = img.read()
     print data.shape
