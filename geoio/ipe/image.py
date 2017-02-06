@@ -153,8 +153,12 @@ class Image(object):
         self._bounds = parse_bounds(bounds)
         self._bounds_hash = base64.urlsafe_b64encode(hashlib.sha1(bounds).digest())
         self._dir = os.getcwd()
+        self._name = ".".join([self.node, self.level, self._gid, self._bounds_hash])
         self._filename = os.path.join(self._dir, "{}_{}.h5".format(self._gid, self._bounds_hash))
         self.vrt = self._vrt()
+        self._url = build_url(self._gid, node=self.node, level=self.level)
+        self._src = rasterio.open(self._url)
+        self.metadata = requests.get('http://idaho.timbr.io/{}.json'.format(self._gid)).json()
         if not os.path.exists(self.vrt):
             self.fetch()
 
@@ -167,14 +171,12 @@ class Image(object):
 
         print("Fetching image")
 
-        url = build_url(self._gid, node=self.node, level=self.level)
-        self._src = rasterio.open(url)
         block_shapes = [(256, 256) for bs in self._src.block_shapes]
         self._roi = roi_from_bbox_projection(self._src, self._bounds, block_shapes=block_shapes)
         window = self._roi.flatten()
         px_bounds = [window[0], window[1], window[0] + window[2], window[1] + window[3] ]
         res = requests.get(url, params={"window": ",".join([str(c) for c in px_bounds])})
-        tmp_vrt = os.path.join(self._dir, ".".join([".tmp", self.node, self.level, self._gid + ".vrt"]))
+        tmp_vrt = os.path.join(self._dir, ".".join([".tmp", self._name + ".vrt"]))
         with open(tmp_vrt, "w") as f:
             f.write(res.content)
 
@@ -227,10 +229,9 @@ class Image(object):
         rows = str(self.darr.shape[1])
         (minx, miny, maxx, maxy) = rasterio.windows.bounds(self._roi, self._src.transform)
         affine = [c for c in rasterio.transform.from_bounds(minx, miny, maxx, maxy, int(cols), int(rows))]
-        transform = [affine[2], affine[4], 0.0, affine[5], 0.0, affine[4]]
+        transform = [affine[2], affine[0], 0.0, affine[5], 0.0, affine[4]]
         
-        vrt = ET.Element("VRTDataset", {"rasterXSize": cols,
-                        "rasterYSize": rows})
+        vrt = ET.Element("VRTDataset", {"rasterXSize": cols, "rasterYSize": rows})
         ET.SubElement(vrt, "SRS").text = str(self._src.crs['init']).upper()
         ET.SubElement(vrt, "GeoTransform").text = ", ".join(map(str, transform))
         for i in self._src.indexes:
@@ -253,7 +254,7 @@ class Image(object):
         return self.vrt
 
     def _vrt(self):
-        return os.path.join(self._dir, ".".join([self._gid, self.node, str(self.level), self._bounds_hash + ".vrt"]))
+        return os.path.join(self._dir, self._name + ".vrt")
 
     @contextlib.contextmanager
     def open(self):
@@ -284,24 +285,22 @@ class Image(object):
             return src.read()
 
     def geotiff(self, path=None, dtype=None):
-        im = self.read()
-        if dtype is not None:
-            im = im.astype(dtype)
-        nbands, height, width = im.shape
-        if path is None:
-            path = os.path.join(self._dir, ".".join([self._gid, self.node, self.level]) + ".tif")
-
         with rasterio.open(self.vrt) as src:
-            im = src.read()
+            windows = src.block_windows(1)
             meta = src.meta.copy()
             meta.update({'driver': 'GTiff'})
+
             if dtype is not None:
-                im = im.astype(dtype)
                 meta.update({'dtype': dtype})
             if path is None:
                 path = os.path.join(self._dir, self._name + ".tif")
+
             with rasterio.open(path, "w", **meta) as dst:
-                dst.write(im)
+                for idx, window in windows:
+                    src_data = src.read(window=window)
+                    if dtype is not None:
+                        dst_data = src_data.astype(dtype, order='F')
+                    dst.write(dst_data, window=window)
         return path
 
 if __name__ == '__main__':
