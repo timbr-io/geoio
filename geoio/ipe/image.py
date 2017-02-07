@@ -94,6 +94,7 @@ def generate_blocks(window, blocksize):
         yield index_to_slice(ind, nrowblocks, ncolblocks)
 
 def build_url(gid, base_url="http://idaho.timbr.io", node="TOAReflectance", level="0"):
+#def build_url(gid, base_url="http://localhost:8080", node="TOAReflectance", level="0"):
     relpath = "/".join([gid, node, str(level) + ".vrt"])
     return urljoin(base_url, relpath)
 
@@ -153,7 +154,7 @@ class Image(object):
         self._bounds = parse_bounds(bounds)
         self._bounds_hash = base64.urlsafe_b64encode(hashlib.sha1(bounds).digest())
         self._dir = os.getcwd()
-        self._name = ".".join([self.node, self.level, self._gid, self._bounds_hash])
+        self._name = ".".join([self._gid, self.node, self.level, self._bounds_hash])
         self._filename = os.path.join(self._dir, "{}_{}.h5".format(self._gid, self._bounds_hash))
         self.vrt = self._vrt()
         self._url = build_url(self._gid, node=self.node, level=self.level)
@@ -175,7 +176,7 @@ class Image(object):
         self._roi = roi_from_bbox_projection(self._src, self._bounds, block_shapes=block_shapes)
         window = self._roi.flatten()
         px_bounds = [window[0], window[1], window[0] + window[2], window[1] + window[3] ]
-        res = requests.get(url, params={"window": ",".join([str(c) for c in px_bounds])})
+        res = requests.get(self._url, params={"window": ",".join([str(c) for c in px_bounds])})
         tmp_vrt = os.path.join(self._dir, ".".join([".tmp", self._name + ".vrt"]))
         with open(tmp_vrt, "w") as f:
             f.write(res.content)
@@ -297,9 +298,12 @@ class Image(object):
 
             with rasterio.open(path, "w", **meta) as dst:
                 for idx, window in windows:
-                    src_data = src.read(window=window)
                     if dtype is not None:
-                        dst_data = src_data.astype(dtype, order='F')
+                        #src_data = (src.read(window=window)*float(np.iinfo(dtype).max/2)).clip(0)
+                        src_data = src.read(window=window)
+                        dst_data = src_data.astype(dtype)
+                    else:
+                        dst_data = src.read(window=window)
                     dst.write(dst_data, window=window)
         return path
 
@@ -313,4 +317,5 @@ if __name__ == '__main__':
     # PAN
     img = Image('c9e5a557-911c-4078-97af-3724cbf76a65', bounds='-105.268013477325455,40.008173936029545,-105.264065265655535,40.011082968626135')
     data = img.read()
+    tif = img.geotiff()
     print data.shape
